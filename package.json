@@ -1,13 +1,18 @@
 {
   "name": "pi-muse-code-context-fold",
-  "version": "0.2.0",
-  "description": "Fold Pi session context into Muse Code CLI prompts for pi-muse-bridge (via Muse Code CLI, not Muse OAuth)",
+  "version": "0.3.0",
+  "description": "Registers the muse-code provider for Pi directly (via Muse Code CLI, not Muse OAuth), resuming a real muse session across turns instead of re-sending folded history text every time",
   "type": "module",
   "license": "MIT",
-  "keywords": ["pi", "pi-extension", "muse-code", "pi-muse-bridge"],
+  "keywords": ["pi", "pi-extension", "muse-code"],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/zereight/pi-muse-code-context-fold.git"
+  },
+  "files": ["src", "agents", "README.md"],
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*"
   },
   "pi": {
     "extensions": ["./src/index.ts"]

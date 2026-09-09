@@ -1,7 +1,3 @@
-export const PRIOR_MARKER = "<!-- pi-muse-prior-context -->";
-export const SESSION_MARKER_PREFIX = "<!-- pi-muse-session-id:";
-const SESSION_MARKER_SUFFIX = " -->";
-
 // Keep folded prompts bounded: long sessions would otherwise blow up the
 // one-shot `muse exec` prompt. Newest turns win; older ones are dropped.
 export const MAX_PRIOR_TURNS = 20;
@@ -19,7 +15,7 @@ function textOf(content) {
 		.join("\n");
 }
 
-function capText(text) {
+export function capText(text) {
 	if (text.length <= MAX_MESSAGE_CHARS) return text;
 	const half = Math.floor(MAX_MESSAGE_CHARS / 2);
 	const cut = text.length - MAX_MESSAGE_CHARS;
@@ -58,75 +54,52 @@ function formatMessage(msg) {
 	return undefined;
 }
 
-function formatSessionMarker(museSessionId) {
-	return `${SESSION_MARKER_PREFIX}${museSessionId}${SESSION_MARKER_SUFFIX}`;
+function findLastUserIndex(messages) {
+	for (let i = messages.length - 1; i >= 0; i--) {
+		if (messages[i].role === "user") return i;
+	}
+	return -1;
 }
 
-/**
- * @param {unknown[]} messages
- * @param {{ museSessionId?: string, seeded?: boolean }} [options]
- *   museSessionId: a stable muse `--session-id` for this Pi session, if the
- *   caller's pi-muse-bridge build understands the `pi-muse-session-id`
- *   marker and resumes that muse session instead of starting cold.
- *   seeded: true once this museSessionId has already received the full
- *   prior-context fold on an earlier turn. When true, only the session
- *   marker is (re)attached; the expensive text fold is skipped, since a
- *   resumed muse session already remembers its own earlier turns.
- */
-export function foldMuseContext(messages, options = {}) {
-	const { museSessionId, seeded } = options;
-	let lastUser = -1;
-	for (let i = messages.length - 1; i >= 0; i--) {
-		if (messages[i].role === "user") {
-			lastUser = i;
-			break;
-		}
-	}
-	if (lastUser < 0) return undefined;
-	const current = messages[lastUser];
-	const currentText = textOf(current.content);
-	// Already processed this exact message (e.g. a re-fired hook on the
-	// same request). Leave it alone.
-	if (currentText.includes(PRIOR_MARKER) || currentText.includes(SESSION_MARKER_PREFIX)) {
-		return undefined;
-	}
+/** Raw text of the latest user message. Used once a muse session is
+ * already resumed via --session-id, since muse remembers everything
+ * before this turn on its own. */
+export function latestUserText(messages) {
+	const index = findLastUserIndex(messages);
+	if (index < 0) throw new Error("No user message found in context");
+	return textOf(messages[index].content);
+}
 
-	const priorFormatted = messages.slice(0, lastUser).map(formatMessage).filter(Boolean);
-	const shouldFold = !seeded && priorFormatted.length > 0;
+/** Full prior history folded into one prompt string, for the first turn
+ * of a fresh muse session (nothing to resume yet). */
+export function buildFirstTurnPrompt(messages) {
+	const lastUser = findLastUserIndex(messages);
+	if (lastUser < 0) throw new Error("No user message found in context");
+	const currentText = textOf(messages[lastUser].content);
 
-	let body = currentText;
-	if (shouldFold) {
-		let prior = priorFormatted;
-		let truncated = false;
-		if (prior.length > MAX_PRIOR_TURNS) {
-			prior = prior.slice(prior.length - MAX_PRIOR_TURNS);
-			truncated = true;
-		}
-		let priorText = prior.join("\n\n");
-		if (priorText.length > MAX_PRIOR_CHARS) {
-			priorText = priorText.slice(priorText.length - MAX_PRIOR_CHARS);
-			truncated = true;
-		}
-		body = [
-			PRIOR_MARKER,
-			"Previous Pi session turns, including other models. Continue from Current request.",
-			truncated ? "(Older turns truncated to fit the one-shot CLI prompt.)" : "",
-			"",
-			priorText,
-			"",
-			"Current request:",
-			currentText,
-		]
-			.filter((line, index) => !(index === 2 && line === ""))
-			.join("\n");
+	let prior = messages.slice(0, lastUser).map(formatMessage).filter(Boolean);
+	if (prior.length === 0) return currentText;
+
+	let truncated = false;
+	if (prior.length > MAX_PRIOR_TURNS) {
+		prior = prior.slice(prior.length - MAX_PRIOR_TURNS);
+		truncated = true;
+	}
+	let priorText = prior.join("\n\n");
+	if (priorText.length > MAX_PRIOR_CHARS) {
+		priorText = priorText.slice(priorText.length - MAX_PRIOR_CHARS);
+		truncated = true;
 	}
 
-	if (museSessionId) {
-		body = `${formatSessionMarker(museSessionId)}\n${body}`;
-	}
-
-	if (body === currentText) return undefined;
-	const next = messages.slice();
-	next[lastUser] = { ...current, content: body };
-	return next;
+	return [
+		"Previous Pi session turns, including other models. Continue from Current request.",
+		truncated ? "(Older turns truncated to fit the one-shot CLI prompt.)" : "",
+		"",
+		priorText,
+		"",
+		"Current request:",
+		currentText,
+	]
+		.filter((line, index) => !(index === 1 && line === ""))
+		.join("\n");
 }
