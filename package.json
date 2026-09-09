@@ -1,0 +1,15 @@
+{
+  "name": "pi-muse-code-context-fold",
+  "version": "0.1.0",
+  "description": "Fold Pi session context into Muse Code CLI prompts for pi-muse-bridge (via Muse Code CLI, not Muse OAuth)",
+  "type": "module",
+  "license": "MIT",
+  "keywords": ["pi", "pi-extension", "muse-code", "pi-muse-bridge"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/<your-account>/pi-muse-code-context-fold.git"
+  },
+  "pi": {
+    "extensions": ["./src/index.ts"]
+  }
+}
