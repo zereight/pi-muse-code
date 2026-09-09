@@ -45,6 +45,13 @@ Then reload the running Pi session:
   not a resumed Muse session. Good for mid-chat model switching, not a full
   chat-API replacement.
 
+## Origin
+
+Forked from [pi-muse-bridge](https://github.com/ferdousbhai/pi-muse-bridge)
+by ferdousbhai (MIT). This is a companion extension, not a GitHub fork:
+no upstream code is copied; it hooks Pi's `context` event so the bridge's
+one-shot `muse exec` prompts receive the folded Pi session history.
+
 ## Test
 
 ```sh
