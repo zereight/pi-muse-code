@@ -36,14 +36,37 @@ Then reload the running Pi session:
   behind a `<!-- pi-muse-prior-context -->` marker.
 - Idempotent: an already-folded message is left alone.
 - Bounded: keeps the newest 20 turns and 12,000 chars (`MAX_PRIOR_TURNS`,
-  `MAX_PRIOR_CHARS` in `src/fold.mjs`); older turns are dropped with a note.
+  `MAX_PRIOR_CHARS` in `src/fold.mjs`). Any single prior message (e.g. a huge
+  tool result) is additionally capped at 2,000 chars (`MAX_MESSAGE_CHARS`) so
+  one big tool dump can't crowd the real conversation out of the budget.
 - Non-text blocks (toolCall args, images) are skipped, not serialized.
+- Tracks one muse `--session-id` per Pi session (`~/.local/state/pi-muse-code-context-fold/sessions.json`)
+  and attaches it via `<!-- pi-muse-session-id:<uuid> -->` on every
+  `muse-code` turn.
+- By default it still folds full prior history on **every** `muse-code`
+  turn, same as 0.1.0 — that's the only safe default against stock
+  `pi-muse-bridge` 0.3.0, which spawns a fresh, session-less `muse exec`
+  each turn and would lose everything if this extension stopped re-sending
+  history.
+- Set `PI_MUSE_BRIDGE_RESUMES_SESSION=1` only once your `pi-muse-bridge`
+  build reads that marker and passes it through as `muse exec --session-id`
+  (verified: `muse exec --session-id <uuid>` genuinely resumes a durable
+  session across separate process invocations — see `~/.local/share/muse/sessions/`).
+  With that env var set, this extension folds full history only on the
+  first `muse-code` turn of a Pi session and just re-attaches the marker
+  on later turns, since the resumed muse session already remembers them.
 
 ## Limits
 
-- Still a one-shot `muse exec` under the hood: history arrives as folded text,
-  not a resumed Muse session. Good for mid-chat model switching, not a full
-  chat-API replacement.
+- Still a one-shot `muse exec` under the hood: the first switch into
+  `muse-code` in a Pi session arrives as folded text, not a resumed Muse
+  session, because no earlier turn ran through Muse yet — that first fold
+  is unavoidable regardless of `PI_MUSE_BRIDGE_RESUMES_SESSION`.
+- `PI_MUSE_BRIDGE_RESUMES_SESSION=1` requires a `pi-muse-bridge` patch that
+  does not exist upstream yet (add a `sessionId` to `MuseRunRequest`, parse
+  `pi-muse-session-id` out of the prompt in `latestUserText`, and pass
+  `--session-id` in `getMuseExecArgs`). Until that lands, leave the env var
+  unset; the marker is then a harmless inert comment in the prompt.
 
 ## Origin
 
