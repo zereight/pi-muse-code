@@ -19,7 +19,7 @@ message on `muse-code` turns only.
 # from source (until published)
 pi install ~/pi-muse-code-context-fold
 # or after cloning your fork
-pi install git:github.com/<your-account>/pi-muse-code-context-fold
+pi install git:github.com/zereight/pi-muse-code-context-fold
 ```
 
 Then reload the running Pi session:

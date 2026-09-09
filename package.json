@@ -7,7 +7,7 @@
   "keywords": ["pi", "pi-extension", "muse-code", "pi-muse-bridge"],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/<your-account>/pi-muse-code-context-fold.git"
+    "url": "git+https://github.com/zereight/pi-muse-code-context-fold.git"
   },
   "pi": {
     "extensions": ["./src/index.ts"]
