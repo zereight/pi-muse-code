@@ -15,7 +15,7 @@ import {
 } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { getMuseCatalog, type MuseCatalogModel } from "./catalog.ts";
-import { buildFirstTurnPrompt, latestUserText } from "./fold.mjs";
+import { buildFirstTurnPrompt, latestUserText } from "./fold.ts";
 import { loadMuseSystemPrompt, runMuse } from "./runtime.ts";
 import { createMuseSessionTracker } from "./session.ts";
 

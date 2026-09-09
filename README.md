@@ -48,7 +48,7 @@ Then reload the running Pi session:
   `~/.local/share/muse/sessions/.../session.jsonl`) already remembers
   everything before it.
 - Bounded fold: keeps the newest 20 turns and 12,000 chars
-  (`MAX_PRIOR_TURNS`, `MAX_PRIOR_CHARS` in `src/fold.mjs`). Any single
+  (`MAX_PRIOR_TURNS`, `MAX_PRIOR_CHARS` in `src/fold.ts`). Any single
   prior message (e.g. a huge tool result) is additionally capped at 2,000
   chars (`MAX_MESSAGE_CHARS`) so one big tool dump can't crowd the real
   conversation out of the budget.

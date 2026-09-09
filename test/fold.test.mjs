@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { MAX_MESSAGE_CHARS, MAX_PRIOR_CHARS, MAX_PRIOR_TURNS, buildFirstTurnPrompt, capText, latestUserText } from "../src/fold.mjs";
+import { MAX_MESSAGE_CHARS, MAX_PRIOR_CHARS, MAX_PRIOR_TURNS, buildFirstTurnPrompt, capText, latestUserText } from "../src/fold.ts";
 
 test("latestUserText returns the raw text of the last user message", () => {
 	assert.equal(

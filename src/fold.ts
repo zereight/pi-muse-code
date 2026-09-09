@@ -1,12 +1,12 @@
-// Keep folded prompts bounded: long sessions would otherwise blow up the
-// one-shot `muse exec` prompt. Newest turns win; older ones are dropped.
+// Keep this as .ts, not .mjs: Pi's bundled CLI loads extensions through
+// jiti with tryNative:false, which compiles .ts to CJS. Named imports from
+// a sibling .mjs then become `(0, _fold.buildFirstTurnPrompt)(...)` against
+// a module object that does not actually have that export.
 export const MAX_PRIOR_TURNS = 20;
 export const MAX_PRIOR_CHARS = 12000;
-// One giant tool result (e.g. a workflow dump) must not eat the whole
-// MAX_PRIOR_CHARS budget and evict the actual conversation around it.
 export const MAX_MESSAGE_CHARS = 2000;
 
-function textOf(content) {
+function textOf(content: unknown): string {
 	if (typeof content === "string") return content;
 	if (!Array.isArray(content)) return "";
 	return content
@@ -15,14 +15,23 @@ function textOf(content) {
 		.join("\n");
 }
 
-export function capText(text) {
+export function capText(text: string): string {
 	if (text.length <= MAX_MESSAGE_CHARS) return text;
 	const half = Math.floor(MAX_MESSAGE_CHARS / 2);
 	const cut = text.length - MAX_MESSAGE_CHARS;
 	return `${text.slice(0, half)}\n... (message truncated, ${cut} chars cut) ...\n${text.slice(text.length - half)}`;
 }
 
-function formatMessage(msg) {
+function formatMessage(msg: {
+	role?: string;
+	content?: unknown;
+	provider?: unknown;
+	model?: unknown;
+	toolName?: unknown;
+	summary?: unknown;
+	command?: unknown;
+	output?: unknown;
+}): string | undefined {
 	if (msg.role === "user") {
 		const text = capText(textOf(msg.content));
 		return text ? `User:\n${text}` : undefined;
@@ -33,8 +42,6 @@ function formatMessage(msg) {
 			typeof msg.provider === "string" && typeof msg.model === "string"
 				? `Assistant (${msg.provider}/${msg.model})`
 				: "Assistant";
-		// Non-text blocks (toolCall args, images) are intentionally skipped:
-		// the one-shot CLI prompt only carries readable text.
 		return text ? `${label}:\n${text}` : undefined;
 	}
 	if (msg.role === "toolResult") {
@@ -49,30 +56,36 @@ function formatMessage(msg) {
 		return `Branch summary:\n${capText(msg.summary)}`;
 	}
 	if (msg.role === "bashExecution") {
-		return `Bash: ${msg.command}\n${capText(msg.output ?? "")}`;
+		return `Bash: ${msg.command}\n${capText(typeof msg.output === "string" ? msg.output : "")}`;
 	}
 	return undefined;
 }
 
-function findLastUserIndex(messages) {
+function findLastUserIndex(messages: Array<{ role?: string }>): number {
 	for (let i = messages.length - 1; i >= 0; i--) {
 		if (messages[i].role === "user") return i;
 	}
 	return -1;
 }
 
-/** Raw text of the latest user message. Used once a muse session is
- * already resumed via --session-id, since muse remembers everything
- * before this turn on its own. */
-export function latestUserText(messages) {
+export function latestUserText(messages: Array<{ role?: string; content?: unknown }>): string {
 	const index = findLastUserIndex(messages);
 	if (index < 0) throw new Error("No user message found in context");
 	return textOf(messages[index].content);
 }
 
-/** Full prior history folded into one prompt string, for the first turn
- * of a fresh muse session (nothing to resume yet). */
-export function buildFirstTurnPrompt(messages) {
+export function buildFirstTurnPrompt(
+	messages: Array<{
+		role?: string;
+		content?: unknown;
+		provider?: unknown;
+		model?: unknown;
+		toolName?: unknown;
+		summary?: unknown;
+		command?: unknown;
+		output?: unknown;
+	}>,
+): string {
 	const lastUser = findLastUserIndex(messages);
 	if (lastUser < 0) throw new Error("No user message found in context");
 	const currentText = textOf(messages[lastUser].content);

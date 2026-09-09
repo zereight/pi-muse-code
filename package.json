@@ -1,6 +1,6 @@
 {
   "name": "pi-muse-code-context-fold",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Registers the muse-code provider for Pi directly (via Muse Code CLI, not Muse OAuth), resuming a real muse session across turns instead of re-sending folded history text every time",
   "type": "module",
   "license": "MIT",

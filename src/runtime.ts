@@ -1,7 +1,7 @@
 // Ported from pi-muse-bridge (MIT, ferdousbhai/pi-muse-bridge), with native
 // --session-id support: this package always resumes a durable muse session
 // instead of gating that behind an env var, since it owns both the prompt
-// building (src/fold.mjs) and the process spawn (this file).
+// building (src/fold.ts) and the process spawn (this file).
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
