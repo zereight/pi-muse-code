@@ -1,8 +1,7 @@
-// Ported from pi-muse-bridge (MIT, ferdousbhai/pi-muse-bridge). This
-// package now owns the whole "muse-code" provider itself instead of
-// hooking another package's provider from the outside, so it can resume a
-// real muse session (see src/session.ts, src/runtime.ts) instead of
-// re-sending folded history text on every turn.
+// Ported from pi-muse-bridge (MIT, ferdousbhai/pi-muse-bridge). 0.4.0 drives
+// the `muse-code` provider over MSP against a persistent `muse serve` host
+// (src/host.ts) instead of spawning `muse exec` per turn, and answers the
+// host's approval requests through Pi's own UI.
 import {
 	type Api,
 	type AssistantMessage,
@@ -13,14 +12,20 @@ import {
 	type Model,
 	type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { getMuseCatalog, type MuseCatalogModel } from "./catalog.ts";
-import { buildFirstTurnPrompt, latestUserText } from "./fold.ts";
-import { loadMuseSystemPrompt, runMuse } from "./runtime.ts";
-import { createMuseSessionTracker } from "./session.ts";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { getMuseCatalog, resolveMuseModelId, type MuseCatalogModel } from "./catalog.ts";
+import { buildCatchUpPrompt, buildFirstTurnPrompt, latestUserText } from "./fold.ts";
+import {
+	closeHostAsync,
+	isSandboxed,
+	openSessionAsync,
+	type MuseSessionEntry,
+} from "./host.ts";
+import { loadMuseSystemPrompt, runMuseTurn } from "./runtime.ts";
 
 const MUSE_API = "muse-code-cli" as Api;
 const ALIAS_ID = "muse-spark";
+const EPHEMERAL_KEY = "ephemeral";
 
 const FALLBACK_MODEL: MuseCatalogModel = {
 	id: ALIAS_ID,
@@ -81,16 +86,81 @@ function emptyMessage(model: Model<Api>): AssistantMessage {
 	};
 }
 
-// One tracker per loaded extension instance, i.e. one muse session per
-// running Pi process. See src/session.ts for why that's an acceptable
-// simplification rather than a bug.
-const nextMuseTurn = createMuseSessionTracker();
+// One Pi session per process in practice, but `/new` and `/resume` swap the
+// session file under a live extension instance, so the key is read per turn.
+let currentContext: ExtensionContext | undefined;
+
+function currentSessionKey(): string {
+	try {
+		return currentContext?.sessionManager.getSessionFile() ?? EPHEMERAL_KEY;
+	} catch {
+		return EPHEMERAL_KEY;
+	}
+}
+
+/** Sessions whose approval/diagnostic handlers are already wired. */
+const wired = new WeakSet<MuseSessionEntry>();
+
+/** Structural slices of the MSP approval events this package renders. */
+interface MuseApprovalChoice {
+	choiceId: string;
+	label: string;
+	decision: string;
+}
+
+interface MuseApprovalRequest {
+	approvalId: string;
+	availableChoices: MuseApprovalChoice[];
+	toolName?: string;
+	subject?: { kind?: string; target?: string; command?: string; path?: string };
+}
+
+interface MuseApprovalFailure {
+	kind: string;
+	approvalId: string;
+}
+
+function approvalTarget(request: MuseApprovalRequest): string {
+	const subject = request.subject;
+	return subject?.target ?? subject?.command ?? subject?.path ?? subject?.kind ?? "tool use";
+}
+
+function fallbackChoiceId(request: MuseApprovalRequest): string | undefined {
+	// No UI, or the user dismissed the prompt: prefer a denial the server
+	// offered; the router refuses a choice the request never offered.
+	const denied = request.availableChoices.find((choice) => choice.decision.startsWith("denied"));
+	return denied?.choiceId ?? request.availableChoices[0]?.choiceId;
+}
+
+async function answerApprovalAsync(request: MuseApprovalRequest): Promise<{ choiceId: string }> {
+	const choices = request.availableChoices;
+	const fallback = fallbackChoiceId(request);
+	if (!fallback) return { choiceId: "" };
+	const ui = currentContext?.hasUI ? currentContext.ui : undefined;
+	if (!ui) return { choiceId: fallback };
+	const label = (choice: MuseApprovalChoice) => `${choice.label} (${choice.decision})`;
+	const picked = await ui.select(`Muse approval: ${request.toolName || "tool"} — ${approvalTarget(request)}`, choices.map(label));
+	const index = picked === undefined ? -1 : choices.findIndex((choice) => label(choice) === picked);
+	return { choiceId: index >= 0 ? choices[index].choiceId : fallback };
+}
+
+function wireSession(entry: MuseSessionEntry): void {
+	if (wired.has(entry)) return;
+	wired.add(entry);
+	entry.session.onApproval((request) => answerApprovalAsync(request));
+	entry.session.onApprovalError((failure: MuseApprovalFailure) => {
+		entry.diagnostics.push(`Muse approval failed (${failure.kind}): ${failure.approvalId}`);
+	});
+	entry.session.onGapError((error: { message: string }) => {
+		entry.diagnostics.push(`Muse view gap fill failed: ${error.message}`);
+	});
+}
 
 export function streamMuse(
 	model: Model<Api>,
 	context: Context,
-	options?: SimpleStreamOptions,
-	yolo = true,
+	options: SimpleStreamOptions | undefined,
+	sandboxed: boolean,
 ): AssistantMessageEventStream {
 	const stream = createAssistantMessageEventStream();
 	const output = emptyMessage(model);
@@ -114,40 +184,46 @@ export function streamMuse(
 
 		try {
 			stream.push({ type: "start", partial: output });
-			const { sessionId, isFirstTurn } = nextMuseTurn();
-			// First turn of this muse session: nothing to resume yet, so fold
-			// the full prior Pi conversation into the prompt. Every later turn:
-			// muse already remembers everything up to here via --session-id,
-			// so just forward the newest user message.
-			const task = (isFirstTurn ? buildFirstTurnPrompt(context.messages) : latestUserText(context.messages)).trim();
+			const entry = await openSessionAsync({
+				key: currentSessionKey(),
+				workspaceRoot: process.cwd(),
+				// The Pi-facing alias `muse-spark` is the catalog default, not a muse id.
+				modelId: resolveMuseModelId(model.id),
+				sandboxed,
+			});
+			wireSession(entry);
+
+			// First turn of this muse session: nothing to resume yet, so fold the
+			// full prior Pi conversation into the prompt. Every later turn: the
+			// session already remembers everything up to here, so forward the
+			// newest user message plus whatever other models did in the meantime.
+			const task = (entry.needsFold ? buildFirstTurnPrompt(context.messages) : latestUserText(context.messages)).trim();
 			if (!task) throw new Error("Muse provider received an empty user task");
-			const prompt = `${loadMuseSystemPrompt()}\n\n---\n\n${task}`;
-			const result = await runMuse({
+			const catchUp = entry.needsFold ? undefined : buildCatchUpPrompt(context.messages);
+			const systemPrompt = loadMuseSystemPrompt();
+			const prompt = [systemPrompt, catchUp, task].filter(Boolean).join("\n\n---\n\n");
+			const result = await runMuseTurn({
+				entry,
 				prompt,
-				cwd: process.cwd(),
-				model: model.id,
-				sessionId,
+				displayText: task,
 				thinkingLevel: options?.reasoning,
-				yolo,
 				signal: options?.signal,
 				onTextDelta: pushDelta,
 			});
 
-			if (result.exitCode !== 0) throw new Error(result.errorMessage || `Muse exited with code ${result.exitCode}`);
-			if (!streamedText) pushDelta(result.output);
-			else if (result.output.startsWith(streamedText)) pushDelta(result.output.slice(streamedText.length));
-			else if (result.output !== streamedText) {
-				result.diagnostics.push("Muse terminal output differed from its streamed output; preserved streamed output");
+			if (!streamedText) pushDelta(result.text);
+			else if (result.text.startsWith(streamedText)) pushDelta(result.text.slice(streamedText.length));
+			else if (result.text !== streamedText) {
+				result.diagnostics.push("Muse final text differed from its streamed output; preserved streamed output");
 			}
 
-			output.responseModel = result.model;
+			output.responseModel = model.id;
 			output.usage.input = result.usage.input;
 			output.usage.output = result.usage.output;
 			output.usage.cacheRead = result.usage.cacheRead;
 			output.usage.cacheWrite = result.usage.cacheWrite;
 			output.usage.totalTokens = result.usage.input + result.usage.output + result.usage.cacheRead + result.usage.cacheWrite;
 			calculateCost(model, output.usage);
-			if (result.usage.cost > 0) output.usage.cost.total = result.usage.cost;
 			if (result.diagnostics.length > 0) {
 				output.diagnostics = result.diagnostics.map((message) => ({
 					type: "muse-code",
@@ -173,15 +249,18 @@ export function streamMuse(
 	return stream;
 }
 
-function sandboxedFromEnvironment(): boolean {
-	return /^(1|true|yes)$/i.test(process.env.PI_MUSE_SANDBOXED?.trim() ?? "");
-}
-
 export function registerMuseProvider(pi: ExtensionAPI): void {
 	pi.registerFlag("muse-sandboxed", {
-		description: "Run Muse with its sandbox enabled and approval prompts disabled",
+		description: "Run Muse with its sandbox enabled and approval prompts routed through Pi",
 		type: "boolean",
 		default: false,
+	});
+	pi.on("session_start", (_event, context) => {
+		currentContext = context;
+	});
+	pi.on("session_shutdown", async () => {
+		currentContext = undefined;
+		await closeHostAsync();
 	});
 	pi.registerProvider("muse-code", {
 		name: "Muse Code",
@@ -190,6 +269,6 @@ export function registerMuseProvider(pi: ExtensionAPI): void {
 		api: MUSE_API,
 		models: getMuseProviderModels(),
 		streamSimple: (model, context, options) =>
-			streamMuse(model, context, options, pi.getFlag("muse-sandboxed") !== true && !sandboxedFromEnvironment()),
+			streamMuse(model, context, options, isSandboxed(pi.getFlag("muse-sandboxed") === true)),
 	});
 }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { MAX_MESSAGE_CHARS, MAX_PRIOR_CHARS, MAX_PRIOR_TURNS, buildFirstTurnPrompt, capText, latestUserText } from "../src/fold.ts";
+import { MAX_MESSAGE_CHARS, MAX_PRIOR_CHARS, MAX_PRIOR_TURNS, buildCatchUpPrompt, buildFirstTurnPrompt, capText, latestUserText } from "../src/fold.ts";
 
 test("latestUserText returns the raw text of the last user message", () => {
 	assert.equal(
@@ -72,4 +72,44 @@ test("capText leaves short text alone and truncates long text in the middle", ()
 	const capped = capText(long);
 	assert.ok(capped.length < long.length);
 	assert.match(capped, /message truncated, 500 chars cut/);
+});
+
+test("buildCatchUpPrompt carries turns other models ran since muse last spoke", () => {
+	const prompt = buildCatchUpPrompt([
+		{ role: "user", content: "open the PR" },
+		{ role: "assistant", provider: "muse-code", model: "muse-spark", content: [{ type: "text", text: "opened it" }] },
+		{ role: "user", content: "now fix the flaky test" },
+		{ role: "assistant", provider: "cursor", model: "grok-4.6", content: [{ type: "text", text: "I pinned the clock" }] },
+		{ role: "user", content: "keep going with muse" },
+	]);
+	assert.ok(prompt);
+	assert.match(prompt, /fix the flaky test/);
+	assert.match(prompt, /Assistant \(cursor\/grok-4\.6\):\nI pinned the clock/);
+	assert.doesNotMatch(prompt, /keep going with muse/, "the current request is the task, not catch-up");
+	assert.doesNotMatch(prompt, /opened it/, "muse's own earlier reply is already in its session");
+});
+
+test("buildCatchUpPrompt is empty when muse answered last", () => {
+	assert.equal(
+		buildCatchUpPrompt([
+			{ role: "user", content: "first" },
+			{ role: "assistant", provider: "muse-code", model: "muse-spark", content: [{ type: "text", text: "answer" }] },
+			{ role: "user", content: "second" },
+		]),
+		undefined,
+	);
+	assert.equal(buildCatchUpPrompt([{ role: "user", content: "only turn" }]), undefined);
+});
+
+test("buildCatchUpPrompt bounds what it forwards", () => {
+	const messages = [];
+	for (let index = 0; index < MAX_PRIOR_TURNS + 5; index += 1) {
+		messages.push({ role: "assistant", provider: "cursor", model: "grok-4.6", content: [{ type: "text", text: `turn ${index}` }] });
+	}
+	messages.push({ role: "user", content: "go" });
+	const prompt = buildCatchUpPrompt(messages);
+	assert.ok(prompt);
+	assert.doesNotMatch(prompt, /turn 0\n/);
+	assert.match(prompt, new RegExp(`turn ${MAX_PRIOR_TURNS + 4}`));
+	assert.ok(prompt.length < MAX_PRIOR_CHARS + 500);
 });

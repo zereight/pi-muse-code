@@ -74,39 +74,82 @@ export function latestUserText(messages: Array<{ role?: string; content?: unknow
 	return textOf(messages[index].content);
 }
 
-export function buildFirstTurnPrompt(
-	messages: Array<{
-		role?: string;
-		content?: unknown;
-		provider?: unknown;
-		model?: unknown;
-		toolName?: unknown;
-		summary?: unknown;
-		command?: unknown;
-		output?: unknown;
-	}>,
-): string {
+export const MUSE_PROVIDER_ID = "muse-code";
+
+type FoldableMessage = {
+	role?: string;
+	content?: unknown;
+	provider?: unknown;
+	model?: unknown;
+	toolName?: unknown;
+	summary?: unknown;
+	command?: unknown;
+	output?: unknown;
+};
+
+/** Newest turns first, bounded the same way the first-turn fold is. */
+function boundPriorText(prior: string[]): { text: string; truncated: boolean } {
+	let truncated = false;
+	let bounded = prior;
+	if (bounded.length > MAX_PRIOR_TURNS) {
+		bounded = bounded.slice(bounded.length - MAX_PRIOR_TURNS);
+		truncated = true;
+	}
+	let text = bounded.join("\n\n");
+	if (text.length > MAX_PRIOR_CHARS) {
+		text = text.slice(text.length - MAX_PRIOR_CHARS);
+		truncated = true;
+	}
+	return { text, truncated };
+}
+
+/**
+ * What happened in this Pi session since muse last spoke: turns other models
+ * ran while it was not the selected model, plus anything Pi added in between.
+ * A live or resumed muse session remembers its own past and nothing else, so
+ * without this a "continue what Grok started" reaches muse as a bare
+ * instruction. Walking back to muse's own last reply keeps this stateless — no
+ * cursor to invalidate when Pi compacts history.
+ */
+export function buildCatchUpPrompt(messages: FoldableMessage[], provider = MUSE_PROVIDER_ID): string | undefined {
+	const lastUser = findLastUserIndex(messages);
+	if (lastUser <= 0) return undefined;
+
+	const between: FoldableMessage[] = [];
+	for (let index = lastUser - 1; index >= 0; index -= 1) {
+		const message = messages[index];
+		// Muse authored this one; its session already holds it.
+		if (message.role === "assistant" && message.provider === provider) break;
+		between.push(message);
+	}
+	if (between.length === 0) return undefined;
+
+	const prior = between.reverse().map(formatMessage).filter((text): text is string => Boolean(text));
+	if (prior.length === 0) return undefined;
+	const { text, truncated } = boundPriorText(prior);
+
+	return [
+		"Turns that ran in this Pi session while other models held the conversation (you did not see these):",
+		truncated ? "(Older turns truncated to fit the fold budget.)" : "",
+		"",
+		text,
+	]
+		.filter((line, index) => !(index === 1 && line === ""))
+		.join("\n");
+}
+
+export function buildFirstTurnPrompt(messages: FoldableMessage[]): string {
 	const lastUser = findLastUserIndex(messages);
 	if (lastUser < 0) throw new Error("No user message found in context");
 	const currentText = textOf(messages[lastUser].content);
 
-	let prior = messages.slice(0, lastUser).map(formatMessage).filter(Boolean);
+	const prior = messages.slice(0, lastUser).map(formatMessage).filter((text): text is string => Boolean(text));
 	if (prior.length === 0) return currentText;
-
-	let truncated = false;
-	if (prior.length > MAX_PRIOR_TURNS) {
-		prior = prior.slice(prior.length - MAX_PRIOR_TURNS);
-		truncated = true;
-	}
-	let priorText = prior.join("\n\n");
-	if (priorText.length > MAX_PRIOR_CHARS) {
-		priorText = priorText.slice(priorText.length - MAX_PRIOR_CHARS);
-		truncated = true;
-	}
+	const { text: priorText, truncated } = boundPriorText(prior);
 
 	return [
 		"Previous Pi session turns, including other models. Continue from Current request.",
-		truncated ? "(Older turns truncated to fit the one-shot CLI prompt.)" : "",
+		truncated ? "(Older turns truncated to fit the fold budget.)" : "",
 		"",
 		priorText,
 		"",
