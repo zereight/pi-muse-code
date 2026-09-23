@@ -1,8 +1,8 @@
 ---
 name: muse-spark
-description: System prompt for the muse-code provider registered by pi-muse-code-context-fold.
+description: System prompt for the muse-code provider registered by pi-muse-code.
 model: muse-code/muse-spark
-managed-by: pi-muse-code-context-fold
+managed-by: pi-muse-code
 ---
 
 Complete the delegated task autonomously and stay within its scope.

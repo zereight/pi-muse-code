@@ -1,7 +1,6 @@
-// Ported from pi-muse-bridge (MIT, ferdousbhai/pi-muse-bridge). 0.4.0 drives
-// the `muse-code` provider over MSP against a persistent `muse serve` host
-// (src/host.ts) instead of spawning `muse exec` per turn, and answers the
-// host's approval requests through Pi's own UI.
+// The `muse-code` provider, driven over MSP against a persistent `muse serve`
+// host (src/host.ts). The host's approval requests are answered through Pi's
+// own UI.
 import {
 	type Api,
 	type AssistantMessage,

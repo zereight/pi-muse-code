@@ -1,6 +1,5 @@
-// Ported from pi-muse-bridge (MIT, ferdousbhai/pi-muse-bridge) — reads the
-// model catalog Muse Code itself writes to disk. No pi-muse-bridge
-// dependency; this package now owns model discovery directly.
+// Reads the model catalog Muse Code itself writes to disk. Catalog reading
+// adapted from pi-muse-bridge (MIT, ferdousbhai/pi-muse-bridge).
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";

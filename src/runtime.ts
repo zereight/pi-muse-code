@@ -1,7 +1,6 @@
-// MSP turn execution for the `muse-code` provider. 0.3.x spawned a `muse exec`
-// process per turn and parsed its JSONL by hand; the host now stays up (see
-// src/host.ts), so a turn is a `turn/start` command on an open session and the
-// events arrive typed.
+// MSP turn execution for the `muse-code` provider. The host stays up (see
+// src/host.ts), so a turn is a `turn/start` command on an open session and
+// the events arrive typed.
 import * as fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { parseFrontmatter } from "@earendil-works/pi-coding-agent";

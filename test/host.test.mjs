@@ -13,7 +13,7 @@ import {
 	readTurnUsage,
 } from "../src/runtime.ts";
 
-test("host args reproduce what `muse exec --yolo` used to mean", () => {
+test("host args pair trust with the sandbox and approval posture", () => {
 	assert.deepEqual(getMuseServeArgs(false), ["serve", "--trust-workspace", "--disable-sandbox"]);
 	assert.deepEqual(getMuseServeArgs(true), ["serve", "--trust-workspace"]);
 	assert.equal(getMuseApprovalMode(false), "allowAll");

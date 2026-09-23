@@ -1,6 +1,5 @@
 // One `muse serve` host per Pi process, plus one MSP session per Pi session
-// file. Through 0.3.x every turn spawned `muse exec`; MSP (`@muse-code/sdk`)
-// keeps the host alive instead, so a turn is a `turn/start` command on an open
+// file. The host stays alive, so a turn is a `turn/start` command on an open
 // session rather than a fresh process and a cold handshake.
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
@@ -15,8 +14,8 @@ import {
 	spawnMspConnection,
 } from "@muse-code/sdk";
 
-const CLIENT_NAME = "pi_muse_code_context_fold";
-const CLIENT_VERSION = "0.4.0";
+const CLIENT_NAME = "pi_muse_code";
+const CLIENT_VERSION = "1.0.0";
 
 export type MuseApprovalMode = "allowAll" | "onRequest";
 
@@ -30,8 +29,8 @@ export function isSandboxed(flagValue: boolean | undefined, env: NodeJS.ProcessE
  * wire in `openSessionAsync`.
  */
 export function getMuseServeArgs(sandboxed: boolean): string[] {
-	// `muse exec --yolo` was trust + no sandbox + no approvals; serve has no
-	// `--yolo`, so the three parts are spelled separately.
+	// Trust + no sandbox + no approvals, spelled separately: serve has no
+	// `--yolo` flag.
 	const args = ["serve", "--trust-workspace"];
 	if (!sandboxed) args.push("--disable-sandbox");
 	return args;

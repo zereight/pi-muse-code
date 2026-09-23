@@ -1,26 +1,24 @@
-# pi-muse-code-context-fold
+# pi-muse-code
 
 Pi extension that registers a `muse-code` model provider backed by the
-Muse Code agent, and keeps it coherent when you switch models mid-session
-(e.g. grok → muse → grok) by resuming a real muse session instead of
-re-sending the whole conversation as text on every turn.
+Muse Code agent, through the TypeScript SDK
+[`@muse-code/sdk`](https://www.npmjs.com/package/@muse-code/sdk) over
+**MSP** (the Muse Session Protocol) against a long-lived `muse serve` host.
 
-As of 0.4.0 it drives Muse over **MSP** (the Muse Session Protocol) against a
-long-lived `muse serve` host, through the TypeScript SDK
-[`@muse-code/sdk`](https://www.npmjs.com/package/@muse-code/sdk). 0.3.x
-spawned a `muse exec` process per turn and parsed its JSONL by hand.
+Switching models mid-session (e.g. grok → muse → grok) resumes the same
+muse session instead of re-sending the whole conversation as text on
+every turn.
 
-For Muse Code CLI, not Muse OAuth.
+Uses your local `muse` CLI login, not the Muse OAuth API.
 
 ## Requirements
 
 - Pi 0.85.1 (verified; other 0.8x versions likely work)
 - Node 20 or newer (the MSP SDK's floor)
 - The `muse` CLI on `PATH` (or `PI_MUSE_BINARY` pointing at it), logged in.
-  The SDK does not remove that requirement: it spawns `muse serve` rather
-  than `muse exec`. Muse 1.3.x pairs with SDK 1.3.x; a protocol-fingerprint
-  mismatch is a warning, not a failure.
-- No `pi-muse-bridge` needed or wanted; remove it if installed
+  The SDK drives it as `muse serve`. Muse 1.3.x pairs with SDK 1.3.x; a
+  protocol-fingerprint mismatch is a warning, not a failure.
+- No `pi-muse-bridge` alongside this package; remove it if installed
   (`pi remove npm:pi-muse-bridge`) to avoid two extensions registering the
   same `muse-code` provider id.
 
@@ -29,9 +27,9 @@ For Muse Code CLI, not Muse OAuth.
 ```sh
 # from source (until published)
 npm install            # pulls @muse-code/sdk for the extension
-pi install ~/pi-muse-code-context-fold
+pi install ~/pi-muse-code
 # or after cloning your fork
-pi install git:github.com/zereight/pi-muse-code-context-fold
+pi install git:github.com/zereight/pi-muse-code
 ```
 
 Then reload the running Pi session:
@@ -46,8 +44,8 @@ Then reload the running Pi session:
   with models read from Muse's local model catalog.
 - **One `muse serve` host per Pi process** (`src/host.ts`), spawned lazily on
   the first `muse-code` turn and shut down on `session_shutdown`. Turns are
-  `turn/start` commands on an open session, so a turn no longer pays a process
-  spawn and handshake.
+  `turn/start` commands on an open session, so a turn pays no process spawn
+  or handshake.
 - **One muse session per Pi conversation**, keyed by the Pi session file. Its
   muse session id is written to `~/.pi/agent/muse-code-sessions/<hash>` so a Pi
   restart (or `/resume` of an old conversation) resumes the same muse session
@@ -79,7 +77,7 @@ Then reload the running Pi session:
   Muse's sandbox on and starts sessions in `onRequest` approval mode; each
   host approval request is answered through Pi's own selector. Deny-only
   choices are picked when no UI is available. Without the flag the host runs
-  sandbox-free in `allowAll` mode, matching the old `--yolo` behavior.
+  sandbox-free in `allowAll` mode.
 - **Aborting a turn** sends `turn/interrupt` to the host, so the agent stops
   working instead of silently finishing in the background.
 - Host stderr is not parsed; the SDK reports failures through typed errors
@@ -98,24 +96,17 @@ Then reload the running Pi session:
   (a few seconds). Later turns reuse the host.
 - One host per Pi process. Two Pi processes on the same conversation will
   fight over the session; the loser refolds into a fresh session.
-- Does not install the `agents/muse-spark.md` subagent definition into
-  `~/.pi/agent/agents/` the way `pi-muse-bridge`'s `/muse-setup` command
-  did. This package only owns the `muse-code` chat provider used by
-  `/model`; Pi's separate Task-subagent delegation feature is out of scope
-  here. `agents/muse-spark.md` in this repo is just the system prompt used
-  for `muse-code` chat turns (MSP has no system-prompt parameter, so it is
+- This package only owns the `muse-code` chat provider used by `/model`;
+  Pi's separate Task-subagent delegation feature is out of scope here.
+  `agents/muse-spark.md` in this repo is just the system prompt used for
+  `muse-code` chat turns (MSP has no system-prompt parameter, so it is
   still prepended to each prompt).
 
 ## Origin
 
-Forked from [pi-muse-bridge](https://github.com/ferdousbhai/pi-muse-bridge)
-by ferdousbhai (MIT). 0.1.0–0.2.0 were a companion extension that only
-hooked Pi's `context` event to patch pi-muse-bridge's prompts from the
-outside. 0.3.0 ported pi-muse-bridge's provider/runtime/catalog code
-directly into this package (still MIT, same author's original design) so it
-could resume a real muse session natively instead of working around another
-package's one-shot-only behavior. 0.4.0 replaced the per-turn CLI spawn with
-the MSP SDK.
+Model catalog reading and provider structure adapted from
+[pi-muse-bridge](https://github.com/ferdousbhai/pi-muse-bridge) by
+ferdousbhai (MIT).
 
 ## Test
 

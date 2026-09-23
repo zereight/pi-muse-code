@@ -1,13 +1,13 @@
 {
-  "name": "pi-muse-code-context-fold",
-  "version": "0.4.0",
-  "description": "Registers the muse-code provider for Pi over MSP against a persistent `muse serve` host (not Muse OAuth), resuming a real muse session across turns instead of re-sending folded history text every time",
+  "name": "pi-muse-code",
+  "version": "1.0.0",
+  "description": "Pi extension registering the muse-code provider through the Muse SDK over MSP against a persistent muse serve host, resuming one muse session per Pi conversation",
   "type": "module",
   "license": "MIT",
-  "keywords": ["pi", "pi-extension", "muse-code"],
+  "keywords": ["pi", "pi-extension", "muse-code", "msp"],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/zereight/pi-muse-code-context-fold.git"
+    "url": "git+https://github.com/zereight/pi-muse-code.git"
   },
   "files": ["src", "agents", "README.md"],
   "engines": {
