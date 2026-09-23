@@ -167,16 +167,36 @@ export interface OpenSessionOptions {
 }
 
 /**
+ * A model switch keeps the session: `session/setModel` is durable and lands at
+ * the next model-call boundary.
+ */
+async function switchSessionModelAsync(entry: MuseSessionEntry, modelId: string): Promise<boolean> {
+	const spawned = host;
+	if (!spawned) return false;
+	try {
+		await spawned.connection.command("session/setModel", {
+			sessionId: entry.session.sessionId,
+			model: { modelId },
+		});
+		entry.modelId = modelId;
+		return true;
+	} catch {
+		// A host that will not take the selection (unknown id, older surface) is
+		// better served by a fresh session with the conversation folded in.
+		return false;
+	}
+}
+
+/**
  * The session for this Pi conversation, resumed when a marker from an earlier
  * Pi process points at a muse session this host still has.
  */
 export async function openSessionAsync(options: OpenSessionOptions): Promise<MuseSessionEntry> {
 	const cached = sessions.get(options.key);
-	if (cached && cached.modelId === options.modelId) return cached;
-	// A different model id cannot be applied to a live session through the
-	// facade (no `session/setModel`), so it starts a new one. The fold carries
-	// the Pi conversation across, so context is re-sent rather than lost.
-	if (cached) sessions.delete(options.key);
+	if (cached) {
+		if (cached.modelId === options.modelId || (await switchSessionModelAsync(cached, options.modelId))) return cached;
+		sessions.delete(options.key);
+	}
 
 	const client = await ensureHostAsync(options.sandboxed);
 	const marker = readSessionMarker(options.key);
@@ -188,8 +208,11 @@ export async function openSessionAsync(options: OpenSessionOptions): Promise<Mus
 				modelId: options.modelId,
 				diagnostics: [],
 			};
-			sessions.set(options.key, entry);
-			return entry;
+			// A resumed session keeps the model it was last on.
+			if (await switchSessionModelAsync(entry, options.modelId)) {
+				sessions.set(options.key, entry);
+				return entry;
+			}
 		} catch {
 			// Stale marker: a pruned session log, or `sessionInUse` because another
 			// live host still holds it. Start fresh instead of failing the turn.

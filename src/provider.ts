@@ -14,7 +14,7 @@ import {
 } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getMuseCatalog, resolveMuseModelId, type MuseCatalogModel } from "./catalog.ts";
-import { buildFirstTurnPrompt, latestUserText } from "./fold.ts";
+import { buildCatchUpPrompt, buildFirstTurnPrompt, latestUserText } from "./fold.ts";
 import {
 	closeHostAsync,
 	isSandboxed,
@@ -195,11 +195,13 @@ export function streamMuse(
 
 			// First turn of this muse session: nothing to resume yet, so fold the
 			// full prior Pi conversation into the prompt. Every later turn: the
-			// session already remembers everything up to here, so just forward the
-			// newest user message.
+			// session already remembers everything up to here, so forward the
+			// newest user message plus whatever other models did in the meantime.
 			const task = (entry.needsFold ? buildFirstTurnPrompt(context.messages) : latestUserText(context.messages)).trim();
 			if (!task) throw new Error("Muse provider received an empty user task");
-			const prompt = `${loadMuseSystemPrompt()}\n\n---\n\n${task}`;
+			const catchUp = entry.needsFold ? undefined : buildCatchUpPrompt(context.messages);
+			const systemPrompt = loadMuseSystemPrompt();
+			const prompt = [systemPrompt, catchUp, task].filter(Boolean).join("\n\n---\n\n");
 			const result = await runMuseTurn({
 				entry,
 				prompt,

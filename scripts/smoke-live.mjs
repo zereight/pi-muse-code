@@ -55,6 +55,26 @@ const after = await runMuseTurn({ entry, prompt: "Reply with exactly: AFTER", di
 console.log("--- turn4 after abort ---");
 console.log("text:", JSON.stringify(after.text));
 
+// Model switch: same Pi conversation, another muse model. The session must
+// survive it and still remember the earlier turns.
+const switched = await openSessionAsync({
+	key: `smoke-${process.pid}`,
+	workspaceRoot: process.cwd(),
+	modelId: "muse-spark-1.2",
+	sandboxed: false,
+});
+console.log("--- switch ---");
+console.log("same session:", switched.session.sessionId === entry.session.sessionId);
+console.log("model:", JSON.stringify(switched.session.fold.sessionState.get("session/modelChanged")?.modelId));
+const recall = await runMuseTurn({
+	entry: switched,
+	prompt: "What exact word did you reply with in your second answer? Reply with only that word.",
+	displayText: "recall",
+	thinkingLevel: "off",
+});
+console.log("--- turn5 after switch (expect TWO) ---");
+console.log("text:", JSON.stringify(recall.text));
+
 await closeHostAsync();
 console.log("host closed");
 process.exit(0);

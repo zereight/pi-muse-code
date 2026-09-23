@@ -14,9 +14,21 @@ const hasMuse = spawnSync("muse", ["--version"], { stdio: "ignore" }).status ===
 async function spawnHost() {
 	const handshake = spawnMspConnection({ command: "muse", args: ["serve"], cwd: process.cwd() });
 	const spawned = await handshake.initialize({ clientInfo: { name: "pi_muse_test", version: "0.0.0" } });
-	return new MuseClient(spawned.connection, {
-		durability: readSessionDurability(spawned.initializeResult),
-		host: spawned,
+	return {
+		connection: spawned.connection,
+		client: new MuseClient(spawned.connection, {
+			durability: readSessionDurability(spawned.initializeResult),
+			host: spawned,
+		}),
+	};
+}
+
+async function startEchoSession(client) {
+	return client.startSession({
+		workspaceRoot: process.cwd(),
+		modelId: "muse-spark",
+		providerId: "echo",
+		approvalMode: "allowAll",
 	});
 }
 
@@ -39,12 +51,7 @@ test("a served session streams an answer turn and resumes after a host restart",
 	const first = await spawnHost();
 	let sessionId;
 	try {
-		const session = await first.startSession({
-			workspaceRoot: process.cwd(),
-			modelId: "muse-spark",
-			providerId: "echo",
-			approvalMode: "allowAll",
-		});
+		const session = await startEchoSession(first.client);
 		const run = await runTurn(session, "hello muse");
 		assert.equal(run.outcome.kind, "completed");
 		assert.equal(run.outcome.params.terminal, "completed");
@@ -54,7 +61,7 @@ test("a served session streams an answer turn and resumes after a host restart",
 		// is exactly the Pi-restart case this marker exists for.
 		sessionId = session.sessionId;
 	} finally {
-		await first.close();
+		await first.client.close();
 	}
 
 	// The marker-based resume path: a new host must load the same session. Its
@@ -63,11 +70,28 @@ test("a served session streams an answer turn and resumes after a host restart",
 	// usable again, not that the old items reappear.
 	const revived = await spawnHost();
 	try {
-		const resumed = await revived.resumeSession({ sessionId });
+		const resumed = await revived.client.resumeSession({ sessionId });
 		const followUp = await runTurn(resumed, "second turn");
 		assert.equal(followUp.outcome.kind, "completed");
 		assert.ok(followUp.streamed.length > 0, "expected the resumed session to answer");
 	} finally {
-		await revived.close();
+		await revived.client.close();
+	}
+});
+
+// The echo route only takes `muse-spark`, so a real switch between catalog
+// models is covered by scripts/smoke-live.mjs. What echo can guard is the
+// command shape src/host.ts sends, and the rejection its fallback relies on.
+test("session/setModel accepts a routable model and rejects one the session cannot serve", { skip: !hasMuse }, async () => {
+	const { client, connection } = await spawnHost();
+	try {
+		const session = await startEchoSession(client);
+		const setModel = (modelId) =>
+			connection.command("session/setModel", { sessionId: session.sessionId, model: { modelId } });
+
+		assert.equal((await setModel("muse-spark")).status, "accepted");
+		await assert.rejects(setModel("muse-spark-1.2"), (error) => error.data?.reason === "invalid_model");
+	} finally {
+		await client.close();
 	}
 });

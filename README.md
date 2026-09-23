@@ -55,8 +55,15 @@ Then reload the running Pi session:
   `sessionInUse` from another live host — falls back to a fresh session.
 - The first `muse-code` turn of a fresh session folds the full prior Pi
   conversation (other models included) into the prompt, since there's nothing
-  to resume yet. Every later turn sends just the newest user message: the
-  session already remembers everything before it.
+  to resume yet. Every later turn sends the newest user message plus a
+  **catch-up** of the turns other models ran since muse last answered
+  (`buildCatchUpPrompt`), so grok → muse → grok → muse keeps muse current
+  without re-sending what it already saw.
+- **Switching muse models keeps the session**: a different muse model id is
+  applied with `session/setModel`, and the next turn runs on it with the same
+  memory. A resumed session gets the selected model the same way. When the
+  host rejects the model (`invalid_model`), a fresh session with the
+  conversation folded in takes over.
 - Bounded fold: keeps the newest 20 turns and 12,000 chars
   (`MAX_PRIOR_TURNS`, `MAX_PRIOR_CHARS` in `src/fold.ts`). Any single
   prior message (e.g. a huge tool result) is additionally capped at 2,000
@@ -85,9 +92,8 @@ Then reload the running Pi session:
   SDK has not shipped snapshot ingestion yet. The host still has the whole
   conversation — model memory is intact — but only items from the current
   process show up in `session.fold`.
-- Switching muse models mid-conversation starts a new muse session, because
-  the SDK facade does not expose `session/setModel`. The Pi conversation is
-  folded across, so context is re-sent rather than lost.
+- Catch-up shares the fold bounds, so a long detour through other models
+  reaches muse truncated to the newest turns.
 - The first `muse-code` turn in a Pi process pays the `muse serve` startup
   (a few seconds). Later turns reuse the host.
 - One host per Pi process. Two Pi processes on the same conversation will
@@ -120,7 +126,8 @@ node scripts/smoke-live.mjs     # optional: real provider, spends tokens
 
 `test/msp.test.mjs` starts real `muse serve` hosts against Muse's `echo`
 provider, so it is free but slow (~45s), and it leaves session records in
-Muse's own session log directory.
+Muse's own session log directory. The echo route only accepts `muse-spark`,
+so a real switch between catalog models is checked by the live smoke script.
 
 There is no build step; Pi loads the extension through jiti. A strict
 typecheck is still worth running after changes:
