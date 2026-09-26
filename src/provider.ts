@@ -165,24 +165,57 @@ export function streamMuse(
 	const output = emptyMessage(model);
 
 	void (async () => {
-		let textStarted = false;
+		let textIndex: number | undefined;
 		let streamedText = "";
+		// Block indexes are assigned lazily: progress (thinking) normally
+		// arrives before the answer, but either order must stay consistent.
 		const pushDelta = (delta: string) => {
 			if (!delta) return;
-			if (!textStarted) {
+			if (textIndex === undefined) {
+				textIndex = output.content.length;
 				output.content.push({ type: "text", text: "" });
-				textStarted = true;
-				stream.push({ type: "text_start", contentIndex: 0, partial: output });
+				stream.push({ type: "text_start", contentIndex: textIndex, partial: output });
 			}
-			const block = output.content[0];
+			const block = output.content[textIndex];
 			if (!block || block.type !== "text") return;
 			block.text += delta;
 			streamedText += delta;
-			stream.push({ type: "text_delta", contentIndex: 0, delta, partial: output });
+			stream.push({ type: "text_delta", contentIndex: textIndex, delta, partial: output });
+		};
+
+		let thinkingIndex: number | undefined;
+		let thinkingText = "";
+		const pushThinking = (delta: string) => {
+			if (!delta) return;
+			if (thinkingIndex === undefined) {
+				thinkingIndex = output.content.length;
+				output.content.push({ type: "thinking", thinking: "" });
+				stream.push({ type: "thinking_start", contentIndex: thinkingIndex, partial: output });
+			}
+			const block = output.content[thinkingIndex];
+			if (!block || block.type !== "thinking") return;
+			block.thinking += delta;
+			thinkingText += delta;
+			stream.push({ type: "thinking_delta", contentIndex: thinkingIndex, delta, partial: output });
+		};
+		const endThinking = () => {
+			if (thinkingIndex === undefined) return;
+			stream.push({ type: "thinking_end", contentIndex: thinkingIndex, content: thinkingText, partial: output });
+			thinkingIndex = undefined;
+		};
+
+		const ui = currentContext?.hasUI ? currentContext.ui : undefined;
+		const setWorking = (message?: string) => {
+			try {
+				ui?.setWorkingMessage(message);
+			} catch {
+				// Progress display must never fail the turn.
+			}
 		};
 
 		try {
 			stream.push({ type: "start", partial: output });
+			setWorking("Muse is working...");
 			const entry = await openSessionAsync({
 				key: currentSessionKey(),
 				workspaceRoot: process.cwd(),
@@ -208,6 +241,11 @@ export function streamMuse(
 				thinkingLevel: options?.reasoning,
 				signal: options?.signal,
 				onTextDelta: pushDelta,
+				onThinkingDelta: pushThinking,
+				onProgress: (line) => {
+					pushThinking(`${line}\n`);
+					setWorking(`Muse: ${line.slice(0, 80)}`);
+				},
 			});
 
 			if (!streamedText) pushDelta(result.text);
@@ -230,14 +268,18 @@ export function streamMuse(
 					error: { message },
 				}));
 			}
-			const block = output.content[0];
-			if (block?.type === "text") {
-				stream.push({ type: "text_end", contentIndex: 0, content: block.text, partial: output });
+			endThinking();
+			setWorking();
+			const block = textIndex === undefined ? undefined : output.content[textIndex];
+			if (block?.type === "text" && textIndex !== undefined) {
+				stream.push({ type: "text_end", contentIndex: textIndex, content: block.text, partial: output });
 			}
 			output.stopReason = "stop";
 			stream.push({ type: "done", reason: "stop", message: output });
 			stream.end();
 		} catch (error) {
+			endThinking();
+			setWorking();
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
 			output.errorMessage = error instanceof Error ? error.message : String(error);
 			stream.push({ type: "error", reason: output.stopReason, error: output });

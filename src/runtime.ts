@@ -5,6 +5,7 @@ import * as fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { parseFrontmatter } from "@earendil-works/pi-coding-agent";
 import { forgetDeadHost, interruptMuseTurnAsync, type MuseSessionEntry } from "./host.ts";
+import { ProgressTracker } from "./progress.ts";
 
 export type MuseThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
@@ -38,6 +39,10 @@ export interface MuseTurnRequest {
 	thinkingLevel?: MuseThinkingLevel;
 	signal?: AbortSignal;
 	onTextDelta?: (delta: string) => void;
+	/** One line per muse-side activity (tool calls, shell runs, ...). Best-effort: never throws back. */
+	onProgress?: (line: string) => void;
+	/** Streamed reasoning-summary chunks. Best-effort: never throws back. */
+	onThinkingDelta?: (delta: string) => void;
 }
 
 export interface MuseTurnResult {
@@ -138,6 +143,24 @@ export async function runMuseTurn(request: MuseTurnRequest): Promise<MuseTurnRes
 
 	let streamed = "";
 	const answerItemIds: string[] = [];
+	const tracker = new ProgressTracker();
+	const summaryParts = new Map<string, number>();
+	const emitLines = (lines: string[]) => {
+		for (const line of tracker.take(lines)) {
+			try {
+				request.onProgress?.(line);
+			} catch {
+				// Progress display must never fail the turn.
+			}
+		}
+	};
+	const emitThinking = (delta: string) => {
+		try {
+			request.onThinkingDelta?.(delta);
+		} catch {
+			// Progress display must never fail the turn.
+		}
+	};
 
 	try {
 		const turn = await entry.session.sendUserTurn({
@@ -154,20 +177,49 @@ export async function runMuseTurn(request: MuseTurnRequest): Promise<MuseTurnRes
 
 		const pump = (async () => {
 			for await (const delta of turn.deltas()) {
-				if (aborted || !delta.delta || !isAnswerTextDelta(delta.field)) continue;
+				if (aborted || !delta.delta) continue;
+				if (!isAnswerTextDelta(delta.field)) {
+					// Reasoning summaries stream per part as `summary.N`; tool
+					// output (`output`) stays out — the outcome line covers it.
+					const match = delta.field !== undefined ? /^summary\.(\d+)$/.exec(delta.field) : null;
+					if (match) {
+						tracker.markSummarized(delta.itemId);
+						const part = Number(match[1]);
+						const last = summaryParts.get(delta.itemId);
+						if (last !== undefined && last !== part) emitThinking("\n");
+						summaryParts.set(delta.itemId, part);
+						emitThinking(delta.delta);
+					}
+					continue;
+				}
 				answerItemIds.push(delta.itemId);
 				streamed += delta.delta;
 				request.onTextDelta?.(delta.delta);
 			}
 		})();
 
+		const itemsPump = (async () => {
+			try {
+				for await (const item of turn.items()) {
+					if (aborted) break;
+					emitLines(tracker.linesFor(item));
+				}
+			} catch (error) {
+				entry.diagnostics.push(
+					`Muse progress feed failed: ${error instanceof Error ? error.message : String(error)}`,
+				);
+			}
+		})();
+
 		const outcome = await turn.completed;
 		if (aborted) {
-			// The interrupt stops the work on the host; this reader just detaches.
+			// The interrupt stops the work on the host; these readers just detach.
 			void pump.catch(() => undefined);
+			void itemsPump.catch(() => undefined);
 			throw new Error("Muse run was aborted");
 		}
 		await pump;
+		await itemsPump;
 
 		if (outcome.kind !== "completed") throw new Error(`Muse turn was ${outcome.kind} before it could run`);
 		const terminal = outcome.params;

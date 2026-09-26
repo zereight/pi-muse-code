@@ -68,8 +68,14 @@ Then reload the running Pi session:
   chars (`MAX_MESSAGE_CHARS`) so one big tool dump can't crowd the real
   conversation out of the budget.
 - Non-text blocks (toolCall args, images) are skipped, not serialized.
-- Answer text streams from typed `item/delta` events; reasoning summaries and
-  tool output are filtered out rather than rendered as the reply.
+- Answer text streams from typed `item/delta` events; tool output stays out
+  rather than rendered as the reply.
+- **Progress is visible**: reasoning summaries stream into a Pi thinking
+  block, and tool calls, shell runs, subagents, and workflow transitions
+  add one line each (`tool <name> <args>`, outcome on completion). The live
+  working line shows the latest activity, so a muse turn never looks stuck.
+  Progress is capped (200 lines, 20,000 chars per turn) and never becomes
+  Pi tool calls.
 - Token usage comes from the turn's own counters, falling back to the
   session's counted-once `session/tokenUsage` when a host reports no
   per-turn aggregate.
