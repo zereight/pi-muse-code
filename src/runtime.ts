@@ -4,7 +4,7 @@
 import * as fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { parseFrontmatter } from "@earendil-works/pi-coding-agent";
-import { forgetDeadHost, interruptMuseTurnAsync, type MuseSessionEntry } from "./host.ts";
+import { acquireEntryTurn, forgetDeadHost, interruptMuseTurnAsync, type MuseSessionEntry } from "./host.ts";
 import { ProgressTracker } from "./progress.ts";
 
 export type MuseThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
@@ -133,6 +133,9 @@ export function loadMuseSystemPrompt(): string {
 export async function runMuseTurn(request: MuseTurnRequest): Promise<MuseTurnResult> {
 	const { entry } = request;
 	const folded = entry.needsFold;
+	// One turn per entry at a time; throws without running when aborted in queue.
+	const releaseTurn = await acquireEntryTurn(entry, request.signal);
+	entry.inflight++;
 	let aborted = request.signal?.aborted === true;
 	let abortTurn: (() => void) | undefined;
 	const abort = () => {
@@ -238,6 +241,8 @@ export async function runMuseTurn(request: MuseTurnRequest): Promise<MuseTurnRes
 		forgetDeadHost(error);
 		throw error;
 	} finally {
+		entry.inflight--;
+		releaseTurn();
 		request.signal?.removeEventListener("abort", abort);
 	}
 }

@@ -17,14 +17,15 @@ import { buildCatchUpPrompt, buildFirstTurnPrompt, latestUserText } from "./fold
 import {
 	closeHostAsync,
 	isSandboxed,
+	openEphemeralSessionAsync,
 	openSessionAsync,
+	releaseSessionFile,
 	type MuseSessionEntry,
 } from "./host.ts";
 import { loadMuseSystemPrompt, runMuseTurn } from "./runtime.ts";
 
 const MUSE_API = "muse-code-cli" as Api;
 const ALIAS_ID = "muse-spark";
-const EPHEMERAL_KEY = "ephemeral";
 
 const FALLBACK_MODEL: MuseCatalogModel = {
 	id: ALIAS_ID,
@@ -87,13 +88,16 @@ function emptyMessage(model: Model<Api>): AssistantMessage {
 
 // One Pi session per process in practice, but `/new` and `/resume` swap the
 // session file under a live extension instance, so the key is read per turn.
+// Workflow children share the process: the host closes only after the last
+// live runtime shuts down, never when one sibling finishes.
 let currentContext: ExtensionContext | undefined;
+let liveRuntimes = 0;
 
-function currentSessionKey(): string {
+function currentSessionFile(): string | undefined {
 	try {
-		return currentContext?.sessionManager.getSessionFile() ?? EPHEMERAL_KEY;
+		return currentContext?.sessionManager.getSessionFile() ?? undefined;
 	} catch {
-		return EPHEMERAL_KEY;
+		return undefined;
 	}
 }
 
@@ -216,13 +220,16 @@ export function streamMuse(
 		try {
 			stream.push({ type: "start", partial: output });
 			setWorking("Muse is working...");
-			const entry = await openSessionAsync({
-				key: currentSessionKey(),
-				workspaceRoot: process.cwd(),
-				// The Pi-facing alias `muse-spark` is the catalog default, not a muse id.
-				modelId: resolveMuseModelId(model.id),
-				sandboxed,
-			});
+			const sessionFile = currentSessionFile();
+			// The Pi-facing alias `muse-spark` is the catalog default, not a muse id.
+			const modelId = resolveMuseModelId(model.id);
+			// File-backed sessions resume by file; file-less turns (workflow
+			// children) route by transcript, since a shared fallback key would
+			// funnel concurrent children into one muse session and hang it.
+			const entry =
+				sessionFile !== undefined
+					? await openSessionAsync({ key: sessionFile, workspaceRoot: process.cwd(), modelId, sandboxed })
+					: await openEphemeralSessionAsync({ messages: context.messages, workspaceRoot: process.cwd(), modelId, sandboxed });
 			wireSession(entry);
 
 			// First turn of this muse session: nothing to resume yet, so fold the
@@ -297,11 +304,25 @@ export function registerMuseProvider(pi: ExtensionAPI): void {
 		default: false,
 	});
 	pi.on("session_start", (_event, context) => {
+		liveRuntimes++;
 		currentContext = context;
 	});
-	pi.on("session_shutdown", async () => {
-		currentContext = undefined;
-		await closeHostAsync();
+	pi.on("session_shutdown", async (_event, ctx) => {
+		liveRuntimes = Math.max(0, liveRuntimes - 1);
+		try {
+			const file = ctx.sessionManager.getSessionFile();
+			if (file) releaseSessionFile(file);
+		} catch {
+			// File-less sessions hold no file entry.
+		}
+		// The host outlives every runtime but the last: a finishing child
+		// reports reason=quit just like a quitting process, so the reason
+		// cannot tell "a sibling finished" from "Pi is going away".
+		// Closing on any earlier shutdown would orphan siblings mid-turn.
+		if (liveRuntimes === 0) {
+			currentContext = undefined;
+			await closeHostAsync();
+		}
 	});
 	pi.registerProvider("muse-code", {
 		name: "Muse Code",
