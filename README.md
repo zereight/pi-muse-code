@@ -43,14 +43,18 @@ Then reload the running Pi session:
 - Registers the `muse-code` provider directly (`pi.registerProvider("muse-code", ...)`),
   with models read from Muse's local model catalog.
 - **One `muse serve` host per Pi process** (`src/host.ts`), spawned lazily on
-  the first `muse-code` turn and shut down on `session_shutdown`. Turns are
-  `turn/start` commands on an open session, so a turn pays no process spawn
-  or handshake.
+  the first `muse-code` turn and shut down after the last live session ends.
+  Turns are `turn/start` commands on an open session, so a turn pays no
+  process spawn or handshake.
 - **One muse session per Pi conversation**, keyed by the Pi session file. Its
   muse session id is written to `~/.pi/agent/muse-code-sessions/<hash>` so a Pi
   restart (or `/resume` of an old conversation) resumes the same muse session
   instead of starting cold. A marker that no longer resolves — pruned log, or
   `sessionInUse` from another live host — falls back to a fresh session.
+- **File-less turns (workflow children) never share**: each distinct Pi
+  transcript gets its own muse session, routed by transcript prefix, with no
+  markers. Concurrent turns on one session hang, so sharing is never reused
+  for them; turns on one entry also serialize through a per-entry slot.
 - The first `muse-code` turn of a fresh session folds the full prior Pi
   conversation (other models included) into the prompt, since there's nothing
   to resume yet. Every later turn sends the newest user message plus a
